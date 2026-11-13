@@ -883,8 +883,7 @@
       "description": "Monitor Linux processes without root — detects cron jobs, scheduled tasks, other users' commands.",
       "project_url": "https://github.com/DominicBreuker/pspy",
       "install_commands": [
-        "curl -sSL https://github.com/DominicBreuker/pspy/releases/latest/download/pspy64 -o pspy",
-        "chmod +x pspy"
+        "(umask 077; pspy_dir=$(mktemp -d /tmp/pspy.XXXXXXXXXX) || exit; trap 'rm -rf -- \"$pspy_dir\"' EXIT; curl -fsSL https://github.com/DominicBreuker/pspy/releases/latest/download/pspy64 -o \"$pspy_dir/pspy\" && chmod 700 \"$pspy_dir/pspy\" && mv -fT -- \"$pspy_dir/pspy\" ./pspy)"
       ],
       "run_commands": [
         "./pspy --help"
