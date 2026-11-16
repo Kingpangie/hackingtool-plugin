@@ -188,6 +188,7 @@ class DashboardTests(unittest.TestCase):
         self.assertFalse(app.SETTINGS_PATH.exists())
 
     def test_start_status_duplicate_and_stop(self):
+        self.settings.update(btc_user='legacy"login', btc_password='legacy\\password')
         self.request('/api/start', self.settings)
         status = self.wait_for(lambda value: value['stats'] is not None)
         self.assertEqual(status['stats']['hashrate'], 42.5)
@@ -205,7 +206,8 @@ class DashboardTests(unittest.TestCase):
     def test_xds_start_status_and_stop(self):
         self.fake.write_text(FAKE_XDS)
         settings = {**self.settings, 'coin': 'xds', 'xds_address': 'xds1testaddress',
-                    'xds_node': str(self.fake), 'xds_peers': '192.0.2.1:38333'}
+                    'xds_node': str(self.fake), 'xds_peers': '192.0.2.1:38333',
+                    'btc_user': 'legacy"login', 'btc_password': 'legacy\\password'}
         self.request('/api/start', settings)
         status = self.wait_for(lambda value: value['stats'] is not None)
         self.assertEqual(status['coin'], 'xds')
@@ -248,8 +250,8 @@ class DashboardTests(unittest.TestCase):
         self.assertIsNone(self.wait_for(lambda value: not value['running'])['error'])
 
     def test_bitcoin_credentials_round_trip(self):
-        login = 'account+tag@example.com.worker:/"\\é'
-        password = 'p@ss"word\\secret'
+        login = 'account+tag@example.com.worker:/é'
+        password = 'p@ssword:secret'
         self.fake.write_text(FAKE_BITCOIN.replace(
             "assert config['user'] == 'account.worker' and config['pass'] == 'x'",
             f"assert config['user'] == {login!r} and config['pass'] == {password!r}"))
@@ -263,6 +265,30 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(saved['btc_password'], password)
         self.request('/api/stop', {})
         self.assertFalse(self.wait_for(lambda value: not value['running'])['running'])
+        for key in ('btc_user', 'btc_password'):
+            for char in ('"', '\\'):
+                with self.subTest(field=key, char=char):
+                    invalid = {**settings, key: 'a' + char + 'b'}
+                    for endpoint in ('/api/settings', '/api/start'):
+                        with self.assertRaises(urllib.error.HTTPError) as error:
+                            self.request(endpoint, invalid)
+                        self.assertEqual(error.exception.code, 400)
+                        error.exception.close()
+                    self.assertFalse(self.request('/api/status')['running'])
+                    self.assertEqual(self.request('/api/settings')['settings'], settings)
+        for key in ('btc_user', 'btc_password'):
+            for char in ('"', '\\'):
+                with self.subTest(legacy_field=key, char=char):
+                    legacy = {**settings, key: 'a' + char + 'b'}
+                    app.save_settings(legacy)
+                    self.assertEqual(self.request('/api/settings')['settings'], legacy)
+                    for endpoint in ('/api/settings', '/api/start'):
+                        with self.assertRaises(urllib.error.HTTPError) as error:
+                            self.request(endpoint, legacy)
+                        self.assertEqual(error.exception.code, 400)
+                        error.exception.close()
+                    self.assertEqual(json.loads(app.SETTINGS_PATH.read_text()), legacy)
+                    self.assertFalse(self.request('/api/status')['running'])
         for char in (' ', '\t', '\n', '\x00', '\x7f', '\x85', '\x9f', '\u00a0', '\u2003'):
             for invalid in (char + login, login + char, 'account' + char + 'worker'):
                 with self.subTest(login=invalid), self.assertRaises(ValueError):

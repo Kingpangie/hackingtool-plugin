@@ -34,7 +34,7 @@ DEFAULTS = {'pool': '', 'wallet': '', 'password': 'x', 'worker': '', 'tls': True
             'btc_pools': 'stratum+tcp://us.emcd.network:3333\nstratum+tcp://eu.emcd.network:3333\nstratum+tcp://gate.emcd.network:3333'}
 
 
-def validate(data, require_ready=False):
+def validate(data, require_ready=False, *, allow_legacy_credentials=False):
     if not isinstance(data, dict):
         raise ValueError('Settings must be an object.')
     result = {}
@@ -46,6 +46,9 @@ def validate(data, require_ready=False):
             raise ValueError(f'Invalid {key}.')
         if key == 'btc_user' and any(c.isspace() or unicodedata.category(c) == 'Cc' for c in value):
             raise ValueError('Bitcoin worker login cannot contain whitespace or control characters.')
+        if (not allow_legacy_credentials and data.get('coin', DEFAULTS['coin']) == 'bitcoin'
+                and key in ('btc_user', 'btc_password') and any(c in value for c in ('"', '\\'))):
+            raise ValueError('Bitcoin login and password cannot contain double quotes or backslashes.')
         result[key] = value.strip()
     coin = data.get('coin', DEFAULTS['coin'])
     if coin not in ('monero', 'xds', 'bitcoin'):
@@ -115,7 +118,7 @@ def validate(data, require_ready=False):
 
 def load_settings():
     try:
-        return validate(json.loads(SETTINGS_PATH.read_text()))
+        return validate(json.loads(SETTINGS_PATH.read_text()), allow_legacy_credentials=True)
     except (OSError, ValueError, json.JSONDecodeError):
         return DEFAULTS.copy()
 
