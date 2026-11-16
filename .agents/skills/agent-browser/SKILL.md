@@ -13,7 +13,13 @@ Install: `npm i -g agent-browser && agent-browser install`
 
 ## Start here
 
-This file is a discovery stub, not the usage guide. Before running any `agent-browser` command, load the actual workflow content from the CLI:
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:a087e6400ba694ac2fe9f940c37fdcdee87b6add34b84458436d8f2d2c012bcb -->
+
+This file is a discovery stub, not the usage guide. The `agent-browser skills get core` command requires agent-browser 0.26.0 or later. Check your installed version with `agent-browser --version`; if it is older than 0.26.0, upgrade with `npm i -g agent-browser@latest` before running the command. Load the actual workflow content from the CLI:
+
+<!-- /coderabbit-ai-generated:v1 -->
 
 ```bash
 agent-browser skills get core             # start here: the loop, waits, common tasks, troubleshooting

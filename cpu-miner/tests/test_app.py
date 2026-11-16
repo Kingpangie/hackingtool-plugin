@@ -247,6 +247,27 @@ class DashboardTests(unittest.TestCase):
         self.request('/api/stop', {})
         self.assertIsNone(self.wait_for(lambda value: not value['running'])['error'])
 
+    def test_bitcoin_credentials_round_trip(self):
+        login = 'account+tag@example.com.worker:/"\\é'
+        password = 'p@ss"word\\secret'
+        self.fake.write_text(FAKE_BITCOIN.replace(
+            "assert config['user'] == 'account.worker' and config['pass'] == 'x'",
+            f"assert config['user'] == {login!r} and config['pass'] == {password!r}"))
+        settings = {**self.settings, 'coin': 'bitcoin', 'btc_miner': str(self.fake),
+                    'btc_user': login, 'btc_password': password,
+                    'btc_pools': 'stratum+tcp://ok.test:3333'}
+        self.request('/api/start', settings)
+        self.assertEqual(self.wait_for(lambda value: value['stats'] is not None)['stats']['hashrate'], 123.5)
+        saved = self.request('/api/settings')['settings']
+        self.assertEqual(saved['btc_user'], login)
+        self.assertEqual(saved['btc_password'], password)
+        self.request('/api/stop', {})
+        self.assertFalse(self.wait_for(lambda value: not value['running'])['running'])
+        for char in (' ', '\t', '\n', '\x00', '\x7f', '\x85', '\x9f', '\u00a0', '\u2003'):
+            for invalid in (char + login, login + char, 'account' + char + 'worker'):
+                with self.subTest(login=invalid), self.assertRaises(ValueError):
+                    app.validate({**settings, 'btc_user': invalid}, require_ready=True)
+
     def test_bitcoin_all_pools_fail(self):
         self.fake.write_text(FAKE_BITCOIN)
         settings = {**self.settings, 'coin': 'bitcoin', 'btc_miner': str(self.fake),

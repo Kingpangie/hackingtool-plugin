@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -43,6 +44,8 @@ def validate(data, require_ready=False):
         value = data.get(key, DEFAULTS[key])
         if not isinstance(value, str) or len(value) > limit or any((ord(c) < 32 and not (key == 'btc_pools' and c in '\r\n')) or ord(c) == 127 for c in value):
             raise ValueError(f'Invalid {key}.')
+        if key == 'btc_user' and any(c.isspace() or unicodedata.category(c) == 'Cc' for c in value):
+            raise ValueError('Bitcoin worker login cannot contain whitespace or control characters.')
         result[key] = value.strip()
     coin = data.get('coin', DEFAULTS['coin'])
     if coin not in ('monero', 'xds', 'bitcoin'):
@@ -103,10 +106,6 @@ def validate(data, require_ready=False):
                     raise ValueError()
             except ValueError:
                 raise ValueError('Bitcoin pools must use stratum+tcp:// or stratum+ssl:// with a host and port.') from None
-    if result['btc_user'] and not re.fullmatch(r'[A-Za-z0-9._-]+', result['btc_user']):
-        raise ValueError('Bitcoin worker login may contain letters, numbers, dots, underscores, and hyphens.')
-    if any(c in result['btc_password'] for c in ('"', '\\')):
-        raise ValueError('Bitcoin pool password cannot contain quotes or backslashes.')
     if require_ready and coin == 'bitcoin' and (not result['btc_user'] or not result['btc_pools']):
         raise ValueError('Enter a Bitcoin pool address and worker login.')
     if require_ready and coin == 'xds' and not result['xds_address']:
