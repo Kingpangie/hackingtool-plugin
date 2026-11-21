@@ -292,6 +292,42 @@ def retry_with_sudo(tool: dict, command: str, backend: str, timeout: int,
     return {"status": "error", "message": "cannot retry with sudo on this backend"}
 
 
+# ── Catalog trust policy ──────────────────────────────────────────────────────
+# Catalog commands are free-form strings copied from upstream sources with no
+# pinned revision, signature or digest. They must never reach a shell
+# automatically when they fetch mutable remote content or run privileged.
+
+_PIPE_TO_SHELL = re.compile(
+    r"\b(curl|wget|fetch)\b[^\n]*\|\s*(sudo\s+(-\S+\s+)*)?(ba|z|da|k)?sh\b", re.I)
+_REMOTE_FETCH = re.compile(
+    r"(^|[\s;&|(])(curl|wget|git\s+clone|go\s+install|pip3?\s+install|"
+    r"python3?\s+-m\s+pip\s+install|npm\s+(i|install)|gem\s+install|cargo\s+install)\b",
+    re.I)
+_USES_SUDO = re.compile(r"(^|[\s;&|(])sudo\s")
+
+
+def catalog_command_risks(command: str, install: bool) -> tuple[list[str], bool]:
+    """Return (reasons, hard_block) for a command taken from the catalog.
+
+    hard_block is True for remote content piped straight into a shell; that is
+    never executed from the catalog, even with the opt-in flag.
+    """
+    reasons: list[str] = []
+    hard = False
+    if _PIPE_TO_SHELL.search(command):
+        reasons.append("downloads remote content and pipes it into a shell")
+        hard = True
+    if install:
+        reasons.append("install command is not pinned to an immutable revision, "
+                       "signature or digest")
+    else:
+        if _REMOTE_FETCH.search(command):
+            reasons.append("fetches mutable remote content")
+        if _USES_SUDO.search(command):
+            reasons.append("executes catalog-provided code with sudo")
+    return reasons, hard
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -305,6 +341,10 @@ def main():
                     help="Run INSTALL_COMMANDS (native/wsl only; docker images include the tool)")
     ap.add_argument("--force", action="store_true",
                     help="Bypass the interactive pre-block and still attempt the run.")
+    ap.add_argument("--allow-unverified-catalog", action="store_true",
+                    help="Permit catalog commands that are unpinned, fetch remote content "
+                         "or use sudo, after you have reviewed them. Remote content piped "
+                         "into a shell is never run from the catalog.")
     ap.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     ap.add_argument("--backend",
                     choices=["auto", "native", "wsl", "docker"], default="auto")
@@ -344,6 +384,27 @@ def main():
             ), indent=2))
             return
         command = cmds[0]
+        if not isinstance(command, str):
+            print(json.dumps({"status": "error",
+                              "message": "catalog command is not a string"}, indent=2))
+            sys.exit(2)
+
+        # Enforce catalog trust policy before any backend work or execution.
+        risks, hard_block = catalog_command_risks(command, args.install)
+        if hard_block or (risks and not args.allow_unverified_catalog):
+            if hard_block:
+                hint = ("Refused: " + "; ".join(risks) + ". Review the command and run it "
+                        "manually from a verified, pinned source, or pass your own "
+                        "--command.")
+            else:
+                hint = ("Refused: " + "; ".join(risks) + ". Review the command, then "
+                        "re-run with --allow-unverified-catalog to accept the risk, or "
+                        "run it manually.")
+            print(json.dumps(fallback(
+                tool, "unverified_catalog_command", command, hint=hint,
+            ), indent=2))
+            return
+
         if not args.install and args.args:
             command = f"{command} {args.args}"
 
