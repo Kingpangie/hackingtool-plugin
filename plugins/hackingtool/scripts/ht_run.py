@@ -220,12 +220,18 @@ def run_wsl(command: str, timeout: int, distro: str | None, use_sudo: bool = Fal
 
 def run_docker(command: str, timeout: int, image: str,
                network_host: bool = False, privileged: bool = False,
-               use_entrypoint: bool = True) -> dict:
+               use_entrypoint: bool = True,
+               writable_workdir: bool = False) -> dict:
     """Run inside a docker container.
 
     If use_entrypoint is True (default for override images), we append the
     command as args to the image's ENTRYPOINT. Otherwise we run via bash -lc
     (required for the generic kali-rolling image).
+
+    The caller's working directory is mounted read-only at /work so that code
+    in the (third-party) image cannot modify, delete or add host files. The
+    mount is writable only when the caller explicitly opts in with
+    writable_workdir=True (CLI: --docker-writable-workdir).
     """
     cwd = os.getcwd().replace("\\", "/")
     if len(cwd) > 1 and cwd[1] == ":":
@@ -236,7 +242,8 @@ def run_docker(command: str, timeout: int, image: str,
         argv += ["--network", "host"]
     if privileged:
         argv += ["--privileged"]
-    argv += ["-v", f"{cwd}:/work", "-w", "/work"]
+    mount_spec = f"{cwd}:/work" if writable_workdir else f"{cwd}:/work:ro"
+    argv += ["-v", mount_spec, "-w", "/work"]
 
     if use_entrypoint:
         # Image has a proper ENTRYPOINT (e.g. instrumentisto/nmap → nmap).
@@ -251,7 +258,8 @@ def run_docker(command: str, timeout: int, image: str,
 
     return _run(argv, timeout, "docker",
                 {"command": command, "image": image,
-                 "network_host": network_host, "privileged": privileged})
+                 "network_host": network_host, "privileged": privileged,
+                 "workdir_writable": writable_workdir})
 
 
 # ── Dispatcher ────────────────────────────────────────────────────────────────
@@ -265,7 +273,8 @@ def pick_docker_image(tool_id: str) -> tuple[str, bool]:
 
 def execute(tool: dict, command: str, backend: str, timeout: int,
             distro: str | None, docker_network_host: bool,
-            docker_privileged: bool) -> dict:
+            docker_privileged: bool,
+            docker_writable_workdir: bool = False) -> dict:
     """Run once on the given backend. No retry logic — caller handles that."""
     if backend == "native":
         return run_native(command, timeout)
@@ -276,7 +285,8 @@ def execute(tool: dict, command: str, backend: str, timeout: int,
         return run_docker(command, timeout, image,
                           network_host=docker_network_host,
                           privileged=docker_privileged,
-                          use_entrypoint=use_ep)
+                          use_entrypoint=use_ep,
+                          writable_workdir=docker_writable_workdir)
     if backend == "fallback":
         return {"status": "no_backend"}
     return {"status": "error", "message": f"unknown backend: {backend}"}
@@ -355,6 +365,9 @@ def main():
                     help="Docker: use --network host (useful for LAN scans)")
     ap.add_argument("--privileged", action="store_true",
                     help="Docker: run with --privileged (for raw sockets, hardware access)")
+    ap.add_argument("--docker-writable-workdir", action="store_true",
+                    help="Docker: mount the current directory at /work read-write "
+                         "(default is read-only; the image can then modify host files)")
     ap.add_argument("--no-retry-sudo", action="store_true",
                     help="Don't retry with sudo on permission_denied")
     args = ap.parse_args()
@@ -441,7 +454,8 @@ def main():
 
     # First attempt
     result = execute(tool, command, backend, args.timeout, distro,
-                     args.network_host, args.privileged)
+                     args.network_host, args.privileged,
+                     args.docker_writable_workdir)
 
     # Try sudo retry on permission errors (native/wsl only — docker is already root)
     if (result.get("status") == "error"
